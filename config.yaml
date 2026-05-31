@@ -1,0 +1,58 @@
+workers:
+  - name: iii-state
+    config:
+      adapter:
+        name: kv
+        config:
+          store_method: file_based
+          file_path: ./data/state_store.db
+  - name: console
+    config:
+      http_port: 3113
+  - name: iii-observability
+    config:
+      enabled: true
+      service_name: iii
+      service_version: ${SERVICE_VERSION:__III_ENGINE_VERSION__}
+      exporter: memory
+      memory_max_spans: 1000000
+      metrics_enabled: true
+      metrics_exporter: memory
+      metrics_retention_seconds: 3600
+      metrics_max_count: 10000
+      logs_enabled: true
+      logs_exporter: memory
+      logs_max_count: 1000
+      logs_retention_seconds: 3600
+      logs_console_output: true
+      sampling_ratio: 1.0
+  - name: iii-pubsub
+    config:
+      adapter:
+        name: local
+  - name: iii-queue
+    config:
+      adapter:
+        name: builtin
+  - name: database
+    config:
+      databases:
+        primary:
+          pool:
+            acquire_timeout_ms: 5000
+            idle_timeout_ms: 30000
+            max: 10
+          url: sqlite:./iii.db
+  - name: iii-stream
+    config:
+      port: 3112
+      host: 127.0.0.1
+      adapter:
+        name: kv
+        config:
+          store_method: file_based
+          file_path: ./data/stream_store
+  - name: iii-cron
+    config:
+      adapter:
+        name: kv
