@@ -69,9 +69,6 @@ pub struct Config {
     pub log_to_database: bool,
     pub log_to_pubsub: bool,
     pub log_pubsub_topic: String,
-    pub log_websocket_enabled: bool,
-    pub log_websocket_host: String,
-    pub log_websocket_port: u16,
 }
 
 impl Config {
@@ -109,9 +106,6 @@ impl Config {
             log_to_database: env_bool("LOG_TO_DATABASE", true)?,
             log_to_pubsub: env_bool("LOG_TO_PUBSUB", true)?,
             log_pubsub_topic: env_string("LOG_PUBSUB_TOPIC", "bot.logs"),
-            log_websocket_enabled: env_bool("LOG_WEBSOCKET_ENABLED", true)?,
-            log_websocket_host: env_string("LOG_WEBSOCKET_HOST", "127.0.0.1"),
-            log_websocket_port: env_u16("LOG_WEBSOCKET_PORT", 3120)?,
         })
     }
 }
@@ -141,13 +135,6 @@ fn env_bool(key: &str, default: bool) -> Result<bool> {
 fn env_u64(key: &str, default: u64) -> Result<u64> {
     match env::var(key) {
         Ok(value) => Ok(value.parse::<u64>()?),
-        Err(_) => Ok(default),
-    }
-}
-
-fn env_u16(key: &str, default: u16) -> Result<u16> {
-    match env::var(key) {
-        Ok(value) => Ok(value.parse::<u16>()?),
         Err(_) => Ok(default),
     }
 }

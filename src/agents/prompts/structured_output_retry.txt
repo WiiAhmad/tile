@@ -1,5 +1,0 @@
-Your previous response was not valid JSON for the required schema.
-Return only corrected JSON now.
-No Markdown.
-No prose.
-No extra keys outside the schema.

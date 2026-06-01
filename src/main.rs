@@ -19,7 +19,6 @@ use crate::logging::events::{BotLogEvent, LogLevel};
 use crate::logging::jsonl::JsonlSink;
 use crate::logging::pubsub::PubsubSink;
 use crate::logging::terminal::TerminalSink;
-use crate::logging::websocket::{run_log_websocket_server, WebSocketSink};
 use crate::logging::{LogSink, LoggingBus};
 use crate::telegram::handlers::BotState;
 use std::sync::Arc;
@@ -31,12 +30,10 @@ async fn main() -> Result<()> {
     let config = Config::from_env()?;
     init_logging(&config);
     let l0 = build_l0_repository(&config);
-    let (sinks, websocket_sink) = build_log_sinks(&config);
+    let sinks = build_log_sinks(&config);
     let logs = Arc::new(LoggingBus::new(sinks));
 
-    start_websocket_logging_if_enabled(&config, websocket_sink, logs.clone()).await;
-
-    let health = Arc::new(HealthMonitor::new(l0.clone(), config.clone(), logs.clone()));
+    let health = Arc::new(HealthMonitor::new(config.clone(), logs.clone()));
     let startup_report = health.check_once().await;
     ensure_startup_health(&startup_report)?;
     tokio::spawn(health.clone().run_periodic());
@@ -90,7 +87,7 @@ fn ensure_startup_health(report: &HealthReport) -> Result<()> {
     Ok(())
 }
 
-fn build_log_sinks(config: &Config) -> (Vec<Arc<dyn LogSink>>, Option<WebSocketSink>) {
+fn build_log_sinks(config: &Config) -> Vec<Arc<dyn LogSink>> {
     let mut sinks: Vec<Arc<dyn LogSink>> = Vec::new();
 
     if config.log_to_terminal {
@@ -114,45 +111,20 @@ fn build_log_sinks(config: &Config) -> (Vec<Arc<dyn LogSink>>, Option<WebSocketS
         ));
     }
 
-    let websocket_sink = if config.log_websocket_enabled {
-        let sink = WebSocketSink::new(1024);
-        sinks.push(Arc::new(sink.clone()));
-        Some(sink)
-    } else {
-        None
-    };
-
-    (sinks, websocket_sink)
-}
-
-async fn start_websocket_logging_if_enabled(
-    config: &Config,
-    sink: Option<WebSocketSink>,
-    logs: Arc<LoggingBus>,
-) {
-    let Some(sink) = sink else {
-        return;
-    };
-
-    let host = config.log_websocket_host.clone();
-    let port = config.log_websocket_port;
-
-    tokio::spawn(async move {
-        if let Err(error) = run_log_websocket_server(&host, port, sink).await {
-            logs.emit(BotLogEvent::new(
-                LogLevel::Error,
-                "logging.websocket.failure",
-                format!("WebSocket log server failed: {error:#}"),
-            ))
-            .await;
-        }
-    });
+    sinks
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::health::model::HealthCheck;
+
+    #[test]
+    fn log_sinks_do_not_include_websocket_sink() {
+        let config = Config::from_env().unwrap_or_else(|_| panic!("env config should parse for this test"));
+        let sinks = build_log_sinks(&config);
+        assert!(sinks.len() <= 3);
+    }
 
     #[test]
     fn startup_health_rejects_unhealthy_report() {

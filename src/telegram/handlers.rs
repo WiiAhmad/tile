@@ -7,7 +7,7 @@ use crate::logging::events::{BotLogEvent, LogLevel};
 use crate::logging::redaction::snippet;
 use crate::logging::LoggingBus;
 use crate::telegram::commands::Command;
-use crate::telegram::format::{format_health, format_model, format_start};
+use crate::telegram::format::{format_health, format_menu, format_model, format_start, menu_keyboard, MENU_HEALTH_CALLBACK, MENU_HELP_CALLBACK};
 use crate::types::TelegramMeta;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -45,10 +45,17 @@ pub async fn handle_command(
 
     match command {
         Command::Start => {
-            bot.send_message(msg.chat.id, format_start()).await?;
+            bot.send_message(msg.chat.id, format_start())
+                .reply_markup(menu_keyboard())
+                .await?;
         }
         Command::Help => {
             bot.send_message(msg.chat.id, Command::descriptions().to_string()).await?;
+        }
+        Command::Menu => {
+            bot.send_message(msg.chat.id, format_menu())
+                .reply_markup(menu_keyboard())
+                .await?;
         }
         Command::Model => {
             bot.send_message(
@@ -79,6 +86,30 @@ pub async fn handle_command(
         }
     }
 
+    Ok(())
+}
+
+pub async fn handle_callback_query(bot: Bot, query: CallbackQuery, state: Arc<BotState>) -> ResponseResult<()> {
+    let Some(data) = query.data.as_deref() else {
+        bot.answer_callback_query(query.id).await?;
+        return Ok(());
+    };
+
+    if let Some(message) = &query.message {
+        let chat_id = message.chat().id;
+        match data {
+            MENU_HELP_CALLBACK => {
+                bot.send_message(chat_id, Command::descriptions().to_string()).await?;
+            }
+            MENU_HEALTH_CALLBACK => {
+                let report = state.health.latest().await;
+                bot.send_message(chat_id, format_health(&report)).await?;
+            }
+            _ => {}
+        }
+    }
+
+    bot.answer_callback_query(query.id).await?;
     Ok(())
 }
 
@@ -198,15 +229,24 @@ fn format_l0_result(records: crate::error::Result<Vec<L0Record>>) -> String {
             .iter()
             .map(|record| {
                 format!(
-                    "- {} {:?}: {}",
-                    record.id,
-                    record.role,
+                    "- {}: {}",
+                    l0_role_label(&record.role),
                     snippet(&record.content, 80)
                 )
             })
             .collect::<Vec<_>>()
             .join("\n"),
         Err(_) => "Could not read L0 records. Please try again later.".to_string(),
+    }
+}
+
+fn l0_role_label(role: &L0Role) -> &'static str {
+    match role {
+        L0Role::System => "system",
+        L0Role::User => "user",
+        L0Role::Assistant => "assistant",
+        L0Role::Tool => "tool",
+        L0Role::Telegram => "telegram",
     }
 }
 
@@ -238,6 +278,7 @@ fn command_name(command: &Command) -> &'static str {
     match command {
         Command::Start => "start",
         Command::Help => "help",
+        Command::Menu => "menu",
         Command::Model => "model",
         Command::Health => "health",
         Command::L0List => "l0list",
@@ -248,7 +289,7 @@ fn command_name(command: &Command) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::l0::model::L0Record;
+    use crate::l0::model::{L0Record, L0Role, L0Source};
 
     #[test]
     fn formats_empty_l0_result() {
@@ -256,9 +297,9 @@ mod tests {
     }
 
     #[test]
-    fn formats_l0_record_with_snippet() {
-        let record = L0Record::new_user(
-            "id-1".to_string(),
+    fn formats_l0_records_with_role_labels() {
+        let user = L0Record::new_user(
+            "f914c20b-ce3c-4a52-9d47-8cf61b00cf40".to_string(),
             "telegram:1".to_string(),
             1,
             None,
@@ -266,8 +307,61 @@ mod tests {
             "hello from l0".to_string(),
             1,
         );
+        let assistant = record_with_role(
+            "c68763a8-d8cd-4641-99c6-f01598013fa0",
+            L0Role::Assistant,
+            "Hello! 👋 How can I help you today?",
+        );
+
+        let output = format_l0_result(Ok(vec![user, assistant]));
+
+        assert!(output.contains("- user: hello from l0"));
+        assert!(output.contains("- assistant: Hello! 👋 How can I help you today?"));
+    }
+
+    #[test]
+    fn omits_l0_record_ids() {
+        let record = L0Record::new_user(
+            "f914c20b-ce3c-4a52-9d47-8cf61b00cf40".to_string(),
+            "telegram:1".to_string(),
+            1,
+            None,
+            None,
+            "what is ur name?".to_string(),
+            1,
+        );
+
         let output = format_l0_result(Ok(vec![record]));
-        assert!(output.contains("id-1"));
-        assert!(output.contains("hello from l0"));
+
+        assert!(!output.contains("f914c20b-ce3c-4a52-9d47-8cf61b00cf40"));
+    }
+
+    #[test]
+    fn truncates_l0_record_content() {
+        let content = "a".repeat(81);
+        let record = record_with_role("tool-id", L0Role::Tool, &content);
+
+        let output = format_l0_result(Ok(vec![record]));
+
+        assert_eq!(output, format!("- tool: {}…", "a".repeat(80)));
+    }
+
+    fn record_with_role(id: &str, role: L0Role, content: &str) -> L0Record {
+        L0Record {
+            id: id.to_string(),
+            conversation_id: "telegram:1".to_string(),
+            telegram_chat_id: 1,
+            telegram_user_id: None,
+            telegram_message_id: None,
+            role,
+            content: content.to_string(),
+            source: L0Source::Manual,
+            provider: None,
+            model: None,
+            tool_name: None,
+            tool_call_id: None,
+            raw_json: None,
+            created_at_ms: 1,
+        }
     }
 }

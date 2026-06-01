@@ -7,6 +7,8 @@ pub enum Command {
     Start,
     #[command(description = "show this help text")]
     Help,
+    #[command(description = "show menu buttons")]
+    Menu,
     #[command(description = "show current AI provider and model")]
     Model,
     #[command(description = "show database, iii, and L0 backend health")]

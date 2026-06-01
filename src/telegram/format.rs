@@ -1,7 +1,22 @@
 use crate::health::model::{HealthReport, HealthStatus};
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+
+pub const MENU_HELP_CALLBACK: &str = "menu:help";
+pub const MENU_HEALTH_CALLBACK: &str = "menu:health";
 
 pub fn format_start() -> &'static str {
-    "Hello. I am your Telegram AI L0 bot. Send a message to chat, or use /help."
+    format_menu()
+}
+
+pub fn format_menu() -> &'static str {
+    "Menu\nChoose an option:"
+}
+
+pub fn menu_keyboard() -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![vec![
+        InlineKeyboardButton::callback("Help", MENU_HELP_CALLBACK),
+        InlineKeyboardButton::callback("Health", MENU_HEALTH_CALLBACK),
+    ]])
 }
 
 pub fn format_model(provider: &str, model: &str) -> String {
@@ -46,15 +61,37 @@ mod tests {
     }
 
     #[test]
+    fn formats_menu_keyboard_with_help_and_health_buttons() {
+        assert_eq!(format_menu(), "Menu\nChoose an option:");
+        let keyboard = menu_keyboard();
+        assert_eq!(keyboard.inline_keyboard.len(), 1);
+        assert_eq!(keyboard.inline_keyboard[0].len(), 2);
+        assert_eq!(keyboard.inline_keyboard[0][0].text, "Help");
+        assert_eq!(keyboard.inline_keyboard[0][1].text, "Health");
+    }
+
+    #[test]
     fn formats_health_report() {
-        let report = HealthReport::from_checks(vec![HealthCheck {
-            name: "l0_round_trip".into(),
-            status: HealthStatus::Healthy,
-            latency_ms: Some(12),
-            message: None,
-        }]);
+        let report = HealthReport::from_checks(vec![
+            HealthCheck {
+                name: "ping".into(),
+                status: HealthStatus::Healthy,
+                latency_ms: Some(0),
+                message: None,
+            },
+            HealthCheck {
+                name: "iii_pubsub".into(),
+                status: HealthStatus::Healthy,
+                latency_ms: Some(12),
+                message: None,
+            },
+        ]);
         let formatted = format_health(&report);
         assert!(formatted.contains("Health: healthy"));
-        assert!(formatted.contains("- l0_round_trip: healthy (12ms)"));
+        assert!(formatted.contains("- ping: healthy (0ms)"));
+        assert!(formatted.contains("- iii_pubsub: healthy (12ms)"));
+        assert!(!formatted.contains("ai_provider_config"));
+        assert!(!formatted.contains("telegram_config"));
+        assert!(!formatted.contains("l0_round_trip"));
     }
 }

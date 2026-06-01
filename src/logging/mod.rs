@@ -3,7 +3,6 @@ pub mod jsonl;
 pub mod pubsub;
 pub mod redaction;
 pub mod terminal;
-pub mod websocket;
 
 use crate::error::Result;
 use async_trait::async_trait;

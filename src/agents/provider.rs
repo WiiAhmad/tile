@@ -104,9 +104,6 @@ mod tests {
             log_to_database: true,
             log_to_pubsub: true,
             log_pubsub_topic: "bot.logs".into(),
-            log_websocket_enabled: true,
-            log_websocket_host: "127.0.0.1".into(),
-            log_websocket_port: 3120,
         }
     }
 
