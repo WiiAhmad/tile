@@ -131,7 +131,7 @@ Use L0 records as evidence. Prefer exact records over guesses, but remember that
 When deciding whether to use memory:
 - Use the injected recent conversation history first when it is enough.
 - Use l0_list for recent conversation context, such as checking what happened in the latest messages or tool calls.
-- Use l0_search for older or specific facts, such as a prior preference, name, repeated question, or earlier tool result.
+- Use l0_search for older or specific facts, such as a prior preference, name, repeated question, or earlier tool result. It performs hybrid keyword/phrase search over L0 content for the current conversation.
 - Do not call tools for every message. Many simple questions can be answered from the current message alone.
 
 When searching memory:
@@ -159,7 +159,7 @@ Append this prompt whenever L0 tools are enabled.
 ```text
 You may call these read-only tools:
 
-- l0_search: search raw L0 records for the current Telegram conversation.
+- l0_search: hybrid keyword/phrase search over raw L0 record content for the current Telegram conversation.
 - l0_list: list recent raw L0 records for the current Telegram conversation.
 
 Tool scope:

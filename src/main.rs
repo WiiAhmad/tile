@@ -1,26 +1,17 @@
-mod agents;
-mod config;
-mod error;
-mod health;
-mod l0;
-mod logging;
-mod telegram;
-mod types;
-
-use crate::agents::service::AiService;
-use crate::config::Config;
-use crate::error::Result;
-use crate::health::model::{HealthReport, HealthStatus};
-use crate::health::monitor::HealthMonitor;
-use crate::l0::iii_repository::IiiL0Repository;
-use crate::l0::memory_repository::MemoryL0Repository;
-use crate::l0::repository::L0Repository;
-use crate::logging::events::{BotLogEvent, LogLevel};
-use crate::logging::jsonl::JsonlSink;
-use crate::logging::pubsub::PubsubSink;
-use crate::logging::terminal::TerminalSink;
-use crate::logging::{LogSink, LoggingBus};
-use crate::telegram::handlers::BotState;
+use bot::agents::service::AiService;
+use bot::config::Config;
+use bot::error::Result;
+use bot::health::model::{HealthReport, HealthStatus};
+use bot::health::monitor::HealthMonitor;
+use bot::l0::iii_repository::IiiL0Repository;
+use bot::l0::memory_repository::MemoryL0Repository;
+use bot::l0::repository::L0Repository;
+use bot::logging::events::{BotLogEvent, LogLevel};
+use bot::logging::jsonl::JsonlSink;
+use bot::logging::pubsub::PubsubSink;
+use bot::logging::terminal::TerminalSink;
+use bot::logging::{LogSink, LoggingBus};
+use bot::telegram::handlers::BotState;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -56,7 +47,7 @@ async fn main() -> Result<()> {
     println!("Telegram AI L0 bot initialized");
 
     if config.telegram_token_present {
-        telegram::dispatcher::run(teloxide::Bot::from_env(), state).await;
+        bot::telegram::dispatcher::run(teloxide::Bot::from_env(), state).await;
     } else {
         println!("TELOXIDE_TOKEN is not set; Telegram dispatcher not started.");
     }
@@ -74,9 +65,11 @@ fn build_l0_repository(config: &Config) -> Arc<dyn L0Repository> {
     if std::env::var("L0_USE_MEMORY").is_ok() {
         Arc::new(MemoryL0Repository::new())
     } else {
-        Arc::new(IiiL0Repository::new(&config.iii_url).with_timeout_ms(
-            config.db_health_timeout.as_millis().min(u128::from(u64::MAX)) as u64,
-        ))
+        Arc::new(
+            IiiL0Repository::new(&config.iii_url)
+                .with_timeout_ms(config.db_health_timeout.as_millis().min(u128::from(u64::MAX)) as u64)
+                .with_worker_functions(config.l0_use_worker_functions),
+        )
     }
 }
 
@@ -117,7 +110,7 @@ fn build_log_sinks(config: &Config) -> Vec<Arc<dyn LogSink>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::health::model::HealthCheck;
+    use bot::health::model::HealthCheck;
 
     #[test]
     fn log_sinks_do_not_include_websocket_sink() {

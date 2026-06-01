@@ -13,6 +13,7 @@ pub struct IiiL0Repository {
     iii: III,
     stream_name: String,
     timeout_ms: Option<u64>,
+    use_worker_functions: bool,
 }
 
 impl IiiL0Repository {
@@ -30,11 +31,17 @@ impl IiiL0Repository {
             iii,
             stream_name: stream_name.into(),
             timeout_ms: None,
+            use_worker_functions: false,
         }
     }
 
     pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = Some(timeout_ms);
+        self
+    }
+
+    pub fn with_worker_functions(mut self, enabled: bool) -> Self {
+        self.use_worker_functions = enabled;
         self
     }
 
@@ -46,11 +53,8 @@ impl IiiL0Repository {
             timeout_ms: self.timeout_ms,
         }
     }
-}
 
-#[async_trait]
-impl L0Repository for IiiL0Repository {
-    async fn add(&self, record: L0Record) -> Result<()> {
+    async fn stream_add(&self, record: L0Record) -> Result<()> {
         let payload = serde_json::to_value(StreamSetInput {
             stream_name: self.stream_name.clone(),
             group_id: record.conversation_id.clone(),
@@ -65,7 +69,7 @@ impl L0Repository for IiiL0Repository {
         Ok(())
     }
 
-    async fn list(&self, conversation_id: &str, limit: usize) -> Result<Vec<L0Record>> {
+    async fn stream_list(&self, conversation_id: &str, limit: usize) -> Result<Vec<L0Record>> {
         let payload = serde_json::to_value(StreamListInput {
             stream_name: self.stream_name.clone(),
             group_id: conversation_id.to_string(),
@@ -83,10 +87,79 @@ impl L0Repository for IiiL0Repository {
         Ok(records[start..].to_vec())
     }
 
-    async fn search(&self, conversation_id: &str, query: &str, limit: usize) -> Result<Vec<L0Record>> {
-        let listed = self.list(conversation_id, usize::MAX).await?;
+    async fn stream_search(&self, conversation_id: &str, query: &str, limit: usize) -> Result<Vec<L0Record>> {
+        let listed = self.stream_list(conversation_id, usize::MAX).await?;
         Ok(search_records(&listed, query, limit))
     }
+
+    async fn worker_add(&self, record: &L0Record) -> Result<()> {
+        self.iii
+            .trigger(self.trigger_request("l0::add", serde_json::json!({ "record": record })))
+            .await
+            .context("iii l0::add failed")?;
+        Ok(())
+    }
+
+    async fn worker_list(&self, conversation_id: &str, limit: usize) -> Result<Vec<L0Record>> {
+        let value = self
+            .iii
+            .trigger(self.trigger_request(
+                "l0::list",
+                serde_json::json!({ "conversation_id": conversation_id, "limit": limit }),
+            ))
+            .await
+            .context("iii l0::list failed")?;
+        records_from_l0_worker_value(value, "records")
+    }
+
+    async fn worker_search(&self, conversation_id: &str, query: &str, limit: usize) -> Result<Vec<L0Record>> {
+        let value = self
+            .iii
+            .trigger(self.trigger_request(
+                "l0::search",
+                serde_json::json!({ "conversation_id": conversation_id, "query": query, "limit": limit }),
+            ))
+            .await
+            .context("iii l0::search failed")?;
+        records_from_l0_worker_value(value, "results")
+    }
+}
+
+#[async_trait]
+impl L0Repository for IiiL0Repository {
+    async fn add(&self, record: L0Record) -> Result<()> {
+        if self.use_worker_functions && self.worker_add(&record).await.is_ok() {
+            return Ok(());
+        }
+        self.stream_add(record).await
+    }
+
+    async fn list(&self, conversation_id: &str, limit: usize) -> Result<Vec<L0Record>> {
+        if self.use_worker_functions {
+            if let Ok(records) = self.worker_list(conversation_id, limit).await {
+                return Ok(records);
+            }
+        }
+        self.stream_list(conversation_id, limit).await
+    }
+
+    async fn search(&self, conversation_id: &str, query: &str, limit: usize) -> Result<Vec<L0Record>> {
+        if self.use_worker_functions {
+            if let Ok(records) = self.worker_search(conversation_id, query, limit).await {
+                return Ok(records);
+            }
+        }
+        self.stream_search(conversation_id, query, limit).await
+    }
+}
+
+fn records_from_l0_worker_value(mut value: serde_json::Value, field: &str) -> Result<Vec<L0Record>> {
+    if let Some(object) = value.as_object_mut() {
+        if let Some(records) = object.remove(field).or_else(|| object.remove("records")) {
+            return records_from_stream_list_value(records);
+        }
+    }
+    records_from_stream_list_value(value)
 }
 
 fn records_from_stream_list_value(value: serde_json::Value) -> Result<Vec<L0Record>> {

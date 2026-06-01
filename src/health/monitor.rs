@@ -65,6 +65,8 @@ mod tests {
             l0_max_user_history: 15,
             l0_max_assistant_history: 15,
             l0_search_limit: 10,
+            l0_use_worker_functions: false,
+            l0_fts_sqlite_path: "./data/iii.db".to_string(),
             health_check_interval: Duration::from_secs(60),
             db_health_timeout: Duration::from_millis(1),
             tool_audit_log_to_l0: true,
