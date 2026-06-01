@@ -1,6 +1,6 @@
 # Project Instructions for Claude
 
-This repository is a Rust Telegram AI bot built with `teloxide`, `aisdk`, and `iii-sdk`.
+This repository is a Rust Telegram AI bot built with `teloxide`, `aisdk`, and `rusqlite`.
 
 ## Core workflow
 
@@ -8,8 +8,7 @@ This repository is a Rust Telegram AI bot built with `teloxide`, `aisdk`, and `i
 - Run targeted tests for changed modules, then `cargo test` before reporting completion.
 - Run `cargo check` when changing types, config structs, dependencies, or module wiring.
 - Do not commit, push, or open PRs unless explicitly asked.
-- Do not edit runtime data files unless explicitly asked:
-  - `data/stream_store/**`
+- Do not edit runtime log files unless explicitly asked:
   - `logs/*.jsonl`
 
 ## Runtime architecture
@@ -18,9 +17,9 @@ This repository is a Rust Telegram AI bot built with `teloxide`, `aisdk`, and `i
 - `src/config.rs` owns environment configuration.
 - `src/telegram/**` owns Telegram commands, dispatcher routing, formatting, and handlers.
 - `src/agents/**` owns AI prompt composition, provider selection, structured output, and AI-visible tools.
-- `src/l0/**` owns raw L0 memory persistence/search.
-- `src/logging/**` owns terminal, JSONL, and iii pubsub logging.
-- `src/health/**` owns `/health` backend checks and health report modeling.
+- `src/l0/**` owns raw L0 memory persistence/search through SQLite and FTS.
+- `src/logging/**` owns terminal, mandatory JSONL, and SQLite database logging.
+- `src/health/**` owns `/health` ping checks and health report modeling.
 
 ## Current behavior to preserve
 
@@ -52,21 +51,26 @@ This repository is a Rust Telegram AI bot built with `teloxide`, `aisdk`, and `i
 
 - `/health` should show only:
   - `ping`
-  - `iii_pubsub`
-- Do not re-add `ai_provider_config`, `telegram_config`, or `l0_round_trip` to `/health` unless the user asks.
-- `iii_pubsub` uses `III_URL`, `LOG_PUBSUB_TOPIC`, and `DB_HEALTH_TIMEOUT_MS`.
+- Do not re-add AI provider config, Telegram config, or L0 round-trip checks to `/health` unless the user asks.
+- Health runs every 60 seconds with no env var for the interval.
 
 ### Logging
 
 - Supported logging sinks:
-  - terminal
-  - date-prefixed JSONL
-  - iii pubsub
-- WebSocket logging has been removed because pubsub is used for log streaming.
-- Do not re-add WebSocket logging/config/dependencies unless the user asks.
+  - terminal, always enabled
+  - date-prefixed JSONL, always enabled
+  - SQLite database logging, always enabled
 - JSONL filenames are date-prefixed using UTC date only:
-  - configured `./logs/bot-events.jsonl`
+  - hard-coded `./logs/bot-events.jsonl`
   - actual `./logs/YYYY-MM-DD-bot-events.jsonl`
+- Database log events are stored in `bot_log_events` inside `./data/database.db`.
+
+### SQLite L0 storage
+
+- L0 data is stored in the hard-coded SQLite database path `./data/database.db`.
+- L0 writes and database log writes share one SQLite store/connection in the bot process.
+- L0 list uses an ordered SQL query scoped by `conversation_id`.
+- L0 search returns exact SQL substring matches first, then SQLite FTS5 matches, deduplicated by record id.
 
 ## Useful commands
 
@@ -90,16 +94,12 @@ Use `.env.example` as the template. Do not include real secrets in docs or commi
 
 Important env vars:
 
-- `TELOXIDE_TOKEN`
-- `III_URL`
+- `BOT_TOKEN`
 - `AI_PROVIDER`
 - `AI_MODEL`
-- `ANTHROPIC_API_KEY`
-- `OPENAI_API_KEY`
-- `LOG_TO_TERMINAL`
-- `LOG_TO_JSONL`
-- `LOG_TO_PUBSUB`
-- `LOG_PUBSUB_TOPIC`
+- `AI_API_KEY`
+- `AI_BASE_URL`
+- `AI_API_PATH`
 
 ## Testing notes
 

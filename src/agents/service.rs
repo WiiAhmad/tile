@@ -3,7 +3,7 @@ use crate::agents::prompts::{compose_system_prompt, PromptMode};
 use crate::agents::provider::{build_language_model, SelectedLanguageModel};
 use crate::agents::structured::TelegramAssistantOutput;
 use crate::agents::tools::l0_tools;
-use crate::config::{AiProvider, Config};
+use crate::config::Config;
 use crate::error::Result;
 use crate::l0::repository::L0Repository;
 use crate::logging::events::{BotLogEvent, LogLevel};
@@ -88,7 +88,7 @@ pub struct AisdkGenerator;
 #[async_trait]
 impl AiGenerator for AisdkGenerator {
     async fn generate(&self, request: AiGenerateRequest) -> Result<AiReply> {
-        let api_key = api_key_for_provider(&request.config.ai_provider)?;
+        let api_key = api_key_from_env()?;
         let model = build_language_model(&request.config, api_key)?;
         generate_with_selected_model(model, request).await
     }
@@ -158,11 +158,8 @@ impl AiService {
     }
 }
 
-fn api_key_for_provider(provider: &AiProvider) -> Result<String> {
-    let key = match provider {
-        AiProvider::Anthropic => "ANTHROPIC_API_KEY",
-        AiProvider::OpenAi | AiProvider::OpenAiCompatible => "OPENAI_API_KEY",
-    };
+fn api_key_from_env() -> Result<String> {
+    let key = "AI_API_KEY";
     let value = std::env::var(key)?;
     if value.trim().is_empty() {
         anyhow::bail!("{key} is empty");
@@ -181,7 +178,6 @@ async fn generate_with_selected_model(
     let provider = request.config.ai_provider.as_str().to_string();
     let model_name = request.config.ai_model.clone();
     let max_agent_steps = request.config.max_tool_failure_retries + 3;
-    let _audit_tool_calls_to_l0 = request.config.tool_audit_log_to_l0;
     let text = match model {
         SelectedLanguageModel::OpenAi(model) => {
             let mut builder = LanguageModelRequest::builder()
@@ -249,8 +245,7 @@ mod tests {
 
     fn config() -> Config {
         Config {
-            telegram_token_present: false,
-            iii_url: "ws://127.0.0.1:49134".into(),
+            bot_token: None,
             ai_provider: AiProvider::Anthropic,
             ai_model: "claude-sonnet-4-6".into(),
             ai_base_url: None,
@@ -259,19 +254,10 @@ mod tests {
             l0_max_user_history: 15,
             l0_max_assistant_history: 15,
             l0_search_limit: 10,
-            health_check_interval: Duration::from_secs(60),
-            db_health_timeout: Duration::from_millis(2000),
-            tool_audit_log_to_l0: true,
             max_tool_failure_retries: 5,
             ai_agent_timeout: Duration::from_secs(60),
             ai_agent_max_timeout_retries: 3,
             log_level: "info".into(),
-            log_to_terminal: true,
-            log_to_jsonl: true,
-            log_jsonl_path: "./logs/bot-events.jsonl".into(),
-            log_to_database: true,
-            log_to_pubsub: true,
-            log_pubsub_topic: "bot.logs".into(),
         }
     }
 

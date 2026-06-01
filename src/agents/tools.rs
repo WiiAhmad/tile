@@ -141,7 +141,7 @@ pub fn l0_tools(runtime: TelegramMeta, l0: Arc<dyn L0Repository>, logs: Arc<Logg
         // },
         Tool {
             name: "l0_search".to_string(),
-            description: "Search raw L0 records in the current Telegram conversation.".to_string(),
+            description: "Hybrid keyword/phrase search over raw L0 record content in the current Telegram conversation.".to_string(),
             input_schema: openai_tool_schema::<L0SearchInput>(),
             execute: ToolExecute::new(Box::new({
                 let runtime = runtime.clone();
@@ -247,5 +247,47 @@ mod tests {
             .unwrap();
 
         assert!(output.contains("hello memory"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn registered_l0_tools_can_search_current_conversation() {
+        let repo = Arc::new(MemoryL0Repository::new());
+        repo.add(L0Record::new_user(
+            "id-1".to_string(),
+            "telegram:1".to_string(),
+            1,
+            Some(2),
+            Some(3),
+            "my favorite editor is Helix".to_string(),
+            1,
+        ))
+        .await
+        .unwrap();
+        repo.add(L0Record::new_user(
+            "id-2".to_string(),
+            "telegram:2".to_string(),
+            2,
+            Some(2),
+            Some(3),
+            "Helix in another chat".to_string(),
+            2,
+        ))
+        .await
+        .unwrap();
+
+        let tools = l0_tools(
+            TelegramMeta::from_chat(1, Some(2), Some(3)),
+            repo,
+            Arc::new(LoggingBus::default()),
+        );
+        let search_tool = tools.iter().find(|tool| tool.name == "l0_search").unwrap();
+
+        let output = search_tool
+            .execute
+            .call(serde_json::json!({ "query": "favorite editor", "limit": 10 }))
+            .unwrap();
+
+        assert!(output.contains("my favorite editor is Helix"));
+        assert!(!output.contains("another chat"));
     }
 }

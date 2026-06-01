@@ -81,8 +81,7 @@ mod tests {
 
     fn config() -> Config {
         Config {
-            telegram_token_present: false,
-            iii_url: "ws://127.0.0.1:49134".into(),
+            bot_token: None,
             ai_provider: AiProvider::Anthropic,
             ai_model: "claude-sonnet-4-6".into(),
             ai_base_url: Some("https://proxy.example.com/v1".into()),
@@ -91,19 +90,10 @@ mod tests {
             l0_max_user_history: 15,
             l0_max_assistant_history: 15,
             l0_search_limit: 10,
-            health_check_interval: Duration::from_secs(60),
-            db_health_timeout: Duration::from_millis(2000),
-            tool_audit_log_to_l0: true,
             max_tool_failure_retries: 5,
             ai_agent_timeout: Duration::from_secs(60),
             ai_agent_max_timeout_retries: 3,
             log_level: "info".into(),
-            log_to_terminal: true,
-            log_to_jsonl: true,
-            log_jsonl_path: "./logs/bot-events.jsonl".into(),
-            log_to_database: true,
-            log_to_pubsub: true,
-            log_pubsub_topic: "bot.logs".into(),
         }
     }
 

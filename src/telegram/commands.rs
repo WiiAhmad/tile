@@ -11,7 +11,7 @@ pub enum Command {
     Menu,
     #[command(description = "show current AI provider and model")]
     Model,
-    #[command(description = "show database, iii, and L0 backend health")]
+    #[command(description = "show bot health")]
     Health,
     #[command(description = "list recent L0 records")]
     L0List,

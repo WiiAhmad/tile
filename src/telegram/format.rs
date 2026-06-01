@@ -72,24 +72,15 @@ mod tests {
 
     #[test]
     fn formats_health_report() {
-        let report = HealthReport::from_checks(vec![
-            HealthCheck {
-                name: "ping".into(),
-                status: HealthStatus::Healthy,
-                latency_ms: Some(0),
-                message: None,
-            },
-            HealthCheck {
-                name: "iii_pubsub".into(),
-                status: HealthStatus::Healthy,
-                latency_ms: Some(12),
-                message: None,
-            },
-        ]);
+        let report = HealthReport::from_checks(vec![HealthCheck {
+            name: "ping".into(),
+            status: HealthStatus::Healthy,
+            latency_ms: Some(0),
+            message: None,
+        }]);
         let formatted = format_health(&report);
         assert!(formatted.contains("Health: healthy"));
         assert!(formatted.contains("- ping: healthy (0ms)"));
-        assert!(formatted.contains("- iii_pubsub: healthy (12ms)"));
         assert!(!formatted.contains("ai_provider_config"));
         assert!(!formatted.contains("telegram_config"));
         assert!(!formatted.contains("l0_round_trip"));
