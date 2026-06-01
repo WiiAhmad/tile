@@ -76,6 +76,7 @@ pub async fn post_tool_use(
     log.trace_id = Some(ctx.trace_id.clone());
     log.conversation_id = Some(ctx.conversation_id.clone());
     log.tool_name = Some(ctx.tool_name.clone());
+    log.fields = tool_result_content_fields(result);
     logs.emit(log).await;
     l0.add(L0Record {
         id: Uuid::new_v4().to_string(),
@@ -94,6 +95,20 @@ pub async fn post_tool_use(
         created_at_ms: chrono::Utc::now().timestamp_millis(),
     }).await?;
     Ok(())
+}
+
+fn tool_result_content_fields(result: &serde_json::Value) -> serde_json::Value {
+    if let Some(content) = result.get("content") {
+        serde_json::json!({ "content": content })
+    } else if let Some(content) = result.get("result") {
+        serde_json::json!({ "content": content })
+    } else if let Some(content) = result.get("results") {
+        serde_json::json!({ "content": content })
+    } else if let Some(content) = result.get("records") {
+        serde_json::json!({ "content": content })
+    } else {
+        serde_json::json!({ "content": result })
+    }
 }
 
 pub async fn post_tool_failure(
@@ -134,4 +149,42 @@ pub async fn post_tool_failure(
     }).await;
 
     payload
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::l0::memory_repository::MemoryL0Repository;
+    use crate::l0::repository::L0Repository;
+    use crate::l0::fts_store::SqliteL0FtsStore;
+    use crate::logging::sqlite::SqliteLogSink;
+
+    #[tokio::test]
+    async fn post_tool_use_logs_content_only_untruncated_result() {
+        let l0: Arc<dyn L0Repository> = Arc::new(MemoryL0Repository::new());
+        let log_store = SqliteL0FtsStore::in_memory().unwrap();
+        let logs = Arc::new(LoggingBus::new(vec![Arc::new(SqliteLogSink::new(log_store.clone()))]));
+        let ctx = ToolRuntimeContext {
+            request_id: "request-1".to_string(),
+            trace_id: "trace-1".to_string(),
+            conversation_id: "telegram:1".to_string(),
+            telegram_chat_id: 1,
+            telegram_user_id: Some(2),
+            telegram_message_id: Some(3),
+            tool_name: "l0_search".to_string(),
+            started_at_ms: 1,
+        };
+        let full = "x".repeat(2_000);
+        let result = serde_json::json!({ "ok": true, "result": full, "debug": { "internal": true } });
+
+        post_tool_use(&ctx, &result, l0, logs).await.unwrap();
+        let events = log_store.list_log_events(10).unwrap();
+        let success = events.iter().find(|event| event.event == "tool.success").unwrap();
+
+        assert_eq!(success.fields["content"], result["result"]);
+        assert!(success.fields.get("result").is_none());
+        assert!(success.fields.get("debug").is_none());
+        assert_eq!(success.fields["content"].as_str().unwrap().len(), 2_000);
+        assert!(!success.fields["content"].as_str().unwrap().contains('…'));
+    }
 }

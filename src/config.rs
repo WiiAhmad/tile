@@ -28,26 +28,12 @@ impl AiProvider {
             Self::Anthropic => "anthropic",
         }
     }
-
-    pub fn base_url_env_key(&self) -> &'static str {
-        match self {
-            Self::OpenAi | Self::OpenAiCompatible => "OPENAI_BASE_URL",
-            Self::Anthropic => "ANTHROPIC_BASE_URL",
-        }
-    }
-
-    pub fn api_path_env_key(&self) -> &'static str {
-        match self {
-            Self::OpenAi | Self::OpenAiCompatible => "OPENAI_API_PATH",
-            Self::Anthropic => "ANTHROPIC_API_PATH",
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub telegram_token_present: bool,
-    pub iii_url: String,
+    pub bot_token: Option<String>,
     pub ai_provider: AiProvider,
     pub ai_model: String,
     pub ai_base_url: Option<String>,
@@ -56,21 +42,10 @@ pub struct Config {
     pub l0_max_user_history: usize,
     pub l0_max_assistant_history: usize,
     pub l0_search_limit: usize,
-    pub l0_use_worker_functions: bool,
-    pub l0_fts_sqlite_path: String,
-    pub health_check_interval: Duration,
-    pub db_health_timeout: Duration,
-    pub tool_audit_log_to_l0: bool,
     pub max_tool_failure_retries: usize,
     pub ai_agent_timeout: Duration,
     pub ai_agent_max_timeout_retries: usize,
     pub log_level: String,
-    pub log_to_terminal: bool,
-    pub log_to_jsonl: bool,
-    pub log_jsonl_path: String,
-    pub log_to_database: bool,
-    pub log_to_pubsub: bool,
-    pub log_pubsub_topic: String,
 }
 
 impl Config {
@@ -81,12 +56,14 @@ impl Config {
             AiProvider::OpenAi => "gpt-5",
             AiProvider::OpenAiCompatible => "gpt-5-nano",
         };
-        let ai_base_url = env_optional(ai_provider.base_url_env_key());
-        let ai_api_path = env_optional(ai_provider.api_path_env_key());
+        let ai_base_url = env_optional("AI_BASE_URL");
+        let ai_api_path = env_optional("AI_API_PATH");
+
+        let bot_token = env_optional("BOT_TOKEN");
 
         Ok(Self {
-            telegram_token_present: env::var("TELOXIDE_TOKEN").is_ok(),
-            iii_url: env_string("III_URL", "ws://127.0.0.1:49134"),
+            telegram_token_present: bot_token.is_some(),
+            bot_token,
             ai_provider,
             ai_model: env_string("AI_MODEL", default_model),
             ai_base_url,
@@ -95,21 +72,10 @@ impl Config {
             l0_max_user_history: env_usize("L0_MAX_USER_HISTORY", 15)?,
             l0_max_assistant_history: env_usize("L0_MAX_ASSISTANT_HISTORY", 15)?,
             l0_search_limit: env_usize("L0_SEARCH_LIMIT", 10)?,
-            l0_use_worker_functions: env_bool("L0_USE_WORKER_FUNCTIONS", false)?,
-            l0_fts_sqlite_path: env_string("L0_FTS_SQLITE_PATH", "./data/iii.db"),
-            health_check_interval: Duration::from_secs(env_u64("HEALTH_CHECK_INTERVAL_SECS", 60)?),
-            db_health_timeout: Duration::from_millis(env_u64("DB_HEALTH_TIMEOUT_MS", 2_000)?),
-            tool_audit_log_to_l0: env_bool("TOOL_AUDIT_LOG_TO_L0", true)?,
             max_tool_failure_retries: env_usize("MAX_TOOL_FAILURE_RETRIES", 5)?,
             ai_agent_timeout: Duration::from_secs(env_u64("AI_AGENT_TIMEOUT_SECS", 60)?),
             ai_agent_max_timeout_retries: env_usize("AI_AGENT_MAX_TIMEOUT_RETRIES", 3)?,
             log_level: env_string("LOG_LEVEL", "info"),
-            log_to_terminal: env_bool("LOG_TO_TERMINAL", true)?,
-            log_to_jsonl: env_bool("LOG_TO_JSONL", true)?,
-            log_jsonl_path: env_string("LOG_JSONL_PATH", "./logs/bot-events.jsonl"),
-            log_to_database: env_bool("LOG_TO_DATABASE", true)?,
-            log_to_pubsub: env_bool("LOG_TO_PUBSUB", true)?,
-            log_pubsub_topic: env_string("LOG_PUBSUB_TOPIC", "bot.logs"),
         })
     }
 }
@@ -123,17 +89,6 @@ fn env_optional(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn env_bool(key: &str, default: bool) -> Result<bool> {
-    match env::var(key) {
-        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
-            "1" | "true" | "yes" | "on" => Ok(true),
-            "0" | "false" | "no" | "off" => Ok(false),
-            other => anyhow::bail!("invalid bool for {key}: {other}"),
-        },
-        Err(_) => Ok(default),
-    }
 }
 
 fn env_u64(key: &str, default: u64) -> Result<u64> {
@@ -171,25 +126,30 @@ mod tests {
     }
 
     #[test]
-    fn exposes_provider_specific_endpoint_env_keys() {
-        assert_eq!(AiProvider::OpenAi.base_url_env_key(), "OPENAI_BASE_URL");
-        assert_eq!(AiProvider::OpenAi.api_path_env_key(), "OPENAI_API_PATH");
-        assert_eq!(
-            AiProvider::OpenAiCompatible.base_url_env_key(),
-            "OPENAI_BASE_URL"
-        );
-        assert_eq!(
-            AiProvider::OpenAiCompatible.api_path_env_key(),
-            "OPENAI_API_PATH"
-        );
-        assert_eq!(
-            AiProvider::Anthropic.base_url_env_key(),
-            "ANTHROPIC_BASE_URL"
-        );
-        assert_eq!(
-            AiProvider::Anthropic.api_path_env_key(),
-            "ANTHROPIC_API_PATH"
-        );
+    fn bot_token_env_marks_telegram_token_present() {
+        unsafe {
+            env::remove_var("BOT_TOKEN");
+            env::set_var("BOT_TOKEN", "123:test");
+        }
+        let config = Config::from_env().unwrap();
+        unsafe {
+            env::remove_var("BOT_TOKEN");
+        }
+
+        assert!(config.telegram_token_present);
+    }
+
+    #[test]
+    fn ignores_tool_audit_env() {
+        unsafe {
+            env::set_var("REMOVED_BOOLEAN_CONFIG", "not-a-bool");
+        }
+        let result = Config::from_env();
+        unsafe {
+            env::remove_var("REMOVED_BOOLEAN_CONFIG");
+        }
+
+        assert!(result.is_ok());
     }
 
     #[test]

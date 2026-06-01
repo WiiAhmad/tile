@@ -1,5 +1,6 @@
 use crate::error::Result;
 use crate::l0::model::L0Record;
+use crate::logging::events::BotLogEvent;
 use rusqlite::{params, Connection};
 use std::sync::{Arc, Mutex};
 
@@ -19,6 +20,13 @@ impl SqliteL0FtsStore {
     }
 
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
         let conn = Connection::open(path)?;
         let store = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -57,19 +65,41 @@ impl SqliteL0FtsStore {
                 conversation_id UNINDEXED,
                 content
             );
+
+            CREATE TABLE IF NOT EXISTS bot_log_events (
+                id TEXT PRIMARY KEY,
+                timestamp_ms INTEGER NOT NULL,
+                level TEXT NOT NULL,
+                event TEXT NOT NULL,
+                request_id TEXT,
+                trace_id TEXT,
+                conversation_id TEXT,
+                telegram_chat_id INTEGER,
+                telegram_user_id INTEGER,
+                tool_name TEXT,
+                provider TEXT,
+                model TEXT,
+                message TEXT NOT NULL,
+                fields_json TEXT NOT NULL,
+                event_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_bot_log_events_timestamp
+                ON bot_log_events(timestamp_ms);
             "#,
         )?;
         Ok(())
     }
 
     pub fn add(&self, record: &L0Record) -> Result<()> {
-        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let tx = conn.transaction()?;
         let role = serde_json::to_string(&record.role)?.trim_matches('"').to_string();
         let source = serde_json::to_string(&record.source)?.trim_matches('"').to_string();
         let raw_json = record.raw_json.as_ref().map(serde_json::to_string).transpose()?;
         let record_json = serde_json::to_string(record)?;
 
-        conn.execute(
+        tx.execute(
             r#"
             INSERT OR REPLACE INTO l0_records (
                 id, conversation_id, telegram_chat_id, telegram_user_id, telegram_message_id,
@@ -96,11 +126,12 @@ impl SqliteL0FtsStore {
             ],
         )?;
 
-        conn.execute("DELETE FROM l0_records_fts WHERE id = ?1", params![&record.id])?;
-        conn.execute(
+        tx.execute("DELETE FROM l0_records_fts WHERE id = ?1", params![&record.id])?;
+        tx.execute(
             "INSERT INTO l0_records_fts(id, conversation_id, content) VALUES (?1, ?2, ?3)",
             params![&record.id, &record.conversation_id, &record.content],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -156,15 +187,83 @@ impl SqliteL0FtsStore {
         Ok(results)
     }
 
+    pub fn add_log_event(&self, event: &BotLogEvent) -> Result<()> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let level = serde_json::to_string(&event.level)?.trim_matches('"').to_string();
+        let fields_json = serde_json::to_string(&event.fields)?;
+        let event_json = serde_json::to_string(event)?;
+
+        conn.execute(
+            r#"
+            INSERT OR REPLACE INTO bot_log_events (
+                id, timestamp_ms, level, event, request_id, trace_id, conversation_id,
+                telegram_chat_id, telegram_user_id, tool_name, provider, model,
+                message, fields_json, event_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            "#,
+            params![
+                &event.id,
+                event.timestamp_ms,
+                level,
+                &event.event,
+                &event.request_id,
+                &event.trace_id,
+                &event.conversation_id,
+                event.telegram_chat_id,
+                event.telegram_user_id.map(|value| value as i64),
+                &event.tool_name,
+                &event.provider,
+                &event.model,
+                &event.message,
+                fields_json,
+                event_json,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_log_events(&self, limit: usize) -> Result<Vec<BotLogEvent>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT event_json
+            FROM bot_log_events
+            ORDER BY timestamp_ms DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| row.get::<_, String>(0))?;
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(serde_json::from_str::<BotLogEvent>(&row?)?);
+        }
+        events.reverse();
+        Ok(events)
+    }
+
     fn exact_matches(&self, conversation_id: &str, normalized_query: &str, limit: usize) -> Result<Vec<L0Record>> {
-        let listed = self.list(conversation_id, i64::MAX as usize)?;
-        let mut matches = listed
-            .into_iter()
-            .filter(|record| record.content.to_ascii_lowercase().contains(normalized_query))
-            .collect::<Vec<_>>();
-        matches.sort_by_key(|record| std::cmp::Reverse(record.created_at_ms));
-        matches.truncate(limit);
-        Ok(matches)
+        let pattern = format!("%{}%", escape_like_pattern(normalized_query));
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT record_json
+            FROM l0_records
+            WHERE conversation_id = ?1
+              AND lower(content) LIKE ?2 ESCAPE '\'
+            ORDER BY created_at_ms DESC
+            LIMIT ?3
+            "#,
+        )?;
+        let rows = stmt.query_map(params![conversation_id, pattern, limit as i64], |row| row.get::<_, String>(0))?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(serde_json::from_str::<L0Record>(&row?)?);
+        }
+        Ok(records)
     }
 
     fn fts_matches(&self, conversation_id: &str, query: &str, limit: usize) -> Result<Vec<L0Record>> {
@@ -207,10 +306,18 @@ fn sanitized_fts_query(query: &str) -> Option<String> {
     }
 }
 
+fn escape_like_pattern(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::l0::model::L0Record;
+    use crate::logging::events::{BotLogEvent, LogLevel};
 
     fn user(id: &str, conversation_id: &str, content: &str, created_at_ms: i64) -> L0Record {
         L0Record::new_user(
@@ -222,6 +329,24 @@ mod tests {
             content.to_string(),
             created_at_ms,
         )
+    }
+
+    #[test]
+    fn opens_file_path_and_creates_parent_directory() {
+        let dir = std::env::temp_dir().join(format!("bot-l0-store-{}", uuid::Uuid::new_v4()));
+        let db_path = dir.join("nested").join("l0.db");
+
+        let store = SqliteL0FtsStore::open(&db_path).unwrap();
+        store.add(&user("1", "telegram:1", "persisted", 1)).unwrap();
+        drop(store);
+
+        let reopened = SqliteL0FtsStore::open(&db_path).unwrap();
+        let records = reopened.list("telegram:1", 10).unwrap();
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].content, "persisted");
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -282,6 +407,17 @@ mod tests {
     }
 
     #[test]
+    fn exact_search_uses_sql_substring_matching_before_fts() {
+        let store = SqliteL0FtsStore::in_memory().unwrap();
+        store.add(&user("1", "telegram:1", "alpha favorite editor omega", 1)).unwrap();
+        store.add(&user("2", "telegram:1", "favorite separated from editor", 2)).unwrap();
+
+        let records = store.search("telegram:1", "favorite editor", 10).unwrap();
+
+        assert_eq!(records.iter().map(|record| record.id.as_str()).collect::<Vec<_>>(), vec!["1", "2"]);
+    }
+
+    #[test]
     fn empty_query_or_zero_limit_returns_empty() {
         let store = SqliteL0FtsStore::in_memory().unwrap();
         store.add(&user("1", "telegram:1", "helix", 1)).unwrap();
@@ -294,5 +430,23 @@ mod tests {
     fn sanitizer_removes_fts_syntax_punctuation() {
         assert_eq!(sanitized_fts_query("helix OR config"), Some("helix* or* config*".to_string()));
         assert_eq!(sanitized_fts_query("!!!"), None);
+    }
+
+    #[test]
+    fn like_pattern_escapes_wildcards() {
+        assert_eq!(escape_like_pattern(r"100%_ok\done"), r"100\%\_ok\\done");
+    }
+
+    #[test]
+    fn stores_log_events_in_database() {
+        let store = SqliteL0FtsStore::in_memory().unwrap();
+        let event = BotLogEvent::new(LogLevel::Info, "test.database_log", "hello");
+
+        store.add_log_event(&event).unwrap();
+        let events = store.list_log_events(10).unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, event.id);
+        assert_eq!(events[0].event, "test.database_log");
     }
 }

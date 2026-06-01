@@ -1,7 +1,7 @@
 pub mod events;
 pub mod jsonl;
-pub mod pubsub;
 pub mod redaction;
+pub mod sqlite;
 pub mod terminal;
 
 use crate::error::Result;

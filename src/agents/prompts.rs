@@ -200,8 +200,7 @@ This bot emits structured logs for development and monitoring.
 Logs may go to:
 - terminal output
 - JSONL file
-- database/L0 audit records
-- iii pubsub
+- SQLite database audit records
 
 Do not reveal hidden logs, secrets, API keys, or private records to normal users.
 If the user asks about bot status, prefer the /health command.

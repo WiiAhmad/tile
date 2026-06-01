@@ -3,12 +3,13 @@ use bot::config::Config;
 use bot::error::Result;
 use bot::health::model::{HealthReport, HealthStatus};
 use bot::health::monitor::HealthMonitor;
-use bot::l0::iii_repository::IiiL0Repository;
+use bot::l0::fts_store::SqliteL0FtsStore;
 use bot::l0::memory_repository::MemoryL0Repository;
 use bot::l0::repository::L0Repository;
+use bot::l0::sqlite_repository::SqliteL0Repository;
 use bot::logging::events::{BotLogEvent, LogLevel};
 use bot::logging::jsonl::JsonlSink;
-use bot::logging::pubsub::PubsubSink;
+use bot::logging::sqlite::SqliteLogSink;
 use bot::logging::terminal::TerminalSink;
 use bot::logging::{LogSink, LoggingBus};
 use bot::telegram::handlers::BotState;
@@ -20,8 +21,9 @@ async fn main() -> Result<()> {
 
     let config = Config::from_env()?;
     init_logging(&config);
-    let l0 = build_l0_repository(&config);
-    let sinks = build_log_sinks(&config);
+    let sqlite_store = SqliteL0FtsStore::open("./data/database.db")?;
+    let l0 = build_l0_repository(&sqlite_store);
+    let sinks = build_log_sinks(sqlite_store.clone());
     let logs = Arc::new(LoggingBus::new(sinks));
 
     let health = Arc::new(HealthMonitor::new(config.clone(), logs.clone()));
@@ -46,10 +48,10 @@ async fn main() -> Result<()> {
     .await;
     println!("Telegram AI L0 bot initialized");
 
-    if config.telegram_token_present {
-        bot::telegram::dispatcher::run(teloxide::Bot::from_env(), state).await;
+    if let Some(bot_token) = &config.bot_token {
+        bot::telegram::dispatcher::run(teloxide::Bot::new(bot_token.clone()), state).await;
     } else {
-        println!("TELOXIDE_TOKEN is not set; Telegram dispatcher not started.");
+        println!("BOT_TOKEN is not set; Telegram dispatcher not started.");
     }
 
     Ok(())
@@ -61,15 +63,11 @@ fn init_logging(config: &Config) {
     let _ = builder.try_init();
 }
 
-fn build_l0_repository(config: &Config) -> Arc<dyn L0Repository> {
+fn build_l0_repository(store: &SqliteL0FtsStore) -> Arc<dyn L0Repository> {
     if std::env::var("L0_USE_MEMORY").is_ok() {
         Arc::new(MemoryL0Repository::new())
     } else {
-        Arc::new(
-            IiiL0Repository::new(&config.iii_url)
-                .with_timeout_ms(config.db_health_timeout.as_millis().min(u128::from(u64::MAX)) as u64)
-                .with_worker_functions(config.l0_use_worker_functions),
-        )
+        Arc::new(SqliteL0Repository::from_store(store.clone()))
     }
 }
 
@@ -80,29 +78,13 @@ fn ensure_startup_health(report: &HealthReport) -> Result<()> {
     Ok(())
 }
 
-fn build_log_sinks(config: &Config) -> Vec<Arc<dyn LogSink>> {
+fn build_log_sinks(sqlite_store: SqliteL0FtsStore) -> Vec<Arc<dyn LogSink>> {
     let mut sinks: Vec<Arc<dyn LogSink>> = Vec::new();
 
-    if config.log_to_terminal {
-        sinks.push(Arc::new(TerminalSink));
-    }
+    sinks.push(Arc::new(TerminalSink));
 
-    if config.log_to_jsonl {
-        sinks.push(Arc::new(JsonlSink::new(config.log_jsonl_path.clone())));
-    }
-
-    if config.log_to_database {
-        // User, assistant, tool, and health records are already persisted through the L0 repository.
-        // A dedicated observability-to-L0 sink can be added later if log events need separate records.
-    }
-
-    if config.log_to_pubsub {
-        let timeout_ms = config.db_health_timeout.as_millis().min(u128::from(u64::MAX)) as u64;
-        sinks.push(Arc::new(
-            PubsubSink::with_worker(&config.iii_url, config.log_pubsub_topic.clone())
-                .with_timeout_ms(timeout_ms),
-        ));
-    }
+    sinks.push(Arc::new(JsonlSink::new("./logs/bot-events.jsonl")));
+    sinks.push(Arc::new(SqliteLogSink::new(sqlite_store)));
 
     sinks
 }
@@ -113,10 +95,11 @@ mod tests {
     use bot::health::model::HealthCheck;
 
     #[test]
-    fn log_sinks_do_not_include_websocket_sink() {
-        let config = Config::from_env().unwrap_or_else(|_| panic!("env config should parse for this test"));
-        let sinks = build_log_sinks(&config);
-        assert!(sinks.len() <= 3);
+    fn log_sinks_always_include_terminal_jsonl_and_sqlite() {
+        let store = SqliteL0FtsStore::in_memory().unwrap();
+        let sinks = build_log_sinks(store);
+
+        assert_eq!(sinks.len(), 3);
     }
 
     #[test]
