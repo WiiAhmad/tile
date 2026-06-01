@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     let sinks = build_log_sinks(sqlite_store.clone());
     let logs = Arc::new(LoggingBus::new(sinks));
 
-    let health = Arc::new(HealthMonitor::new(config.clone(), logs.clone()));
+    let health = Arc::new(HealthMonitor::new(logs.clone()));
     let startup_report = health.check_once().await;
     ensure_startup_health(&startup_report)?;
     tokio::spawn(health.clone().run_periodic());

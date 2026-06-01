@@ -245,7 +245,6 @@ mod tests {
 
     fn config() -> Config {
         Config {
-            telegram_token_present: false,
             bot_token: None,
             ai_provider: AiProvider::Anthropic,
             ai_model: "claude-sonnet-4-6".into(),

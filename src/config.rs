@@ -32,7 +32,6 @@ impl AiProvider {
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub telegram_token_present: bool,
     pub bot_token: Option<String>,
     pub ai_provider: AiProvider,
     pub ai_model: String,
@@ -62,7 +61,6 @@ impl Config {
         let bot_token = env_optional("BOT_TOKEN");
 
         Ok(Self {
-            telegram_token_present: bot_token.is_some(),
             bot_token,
             ai_provider,
             ai_model: env_string("AI_MODEL", default_model),
@@ -126,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn bot_token_env_marks_telegram_token_present() {
+    fn bot_token_env_is_loaded() {
         unsafe {
             env::remove_var("BOT_TOKEN");
             env::set_var("BOT_TOKEN", "123:test");
@@ -136,7 +134,7 @@ mod tests {
             env::remove_var("BOT_TOKEN");
         }
 
-        assert!(config.telegram_token_present);
+        assert_eq!(config.bot_token.as_deref(), Some("123:test"));
     }
 
     #[test]

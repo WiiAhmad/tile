@@ -1,4 +1,3 @@
-use crate::config::Config;
 use crate::health::checks::check_ping;
 use crate::health::model::{HealthCheck, HealthReport, HealthStatus};
 use crate::logging::events::{BotLogEvent, LogLevel};
@@ -7,20 +6,19 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct HealthMonitor {
-    config: Config,
     logs: Arc<LoggingBus>,
     latest: Arc<RwLock<HealthReport>>,
 }
 
 impl HealthMonitor {
-    pub fn new(config: Config, logs: Arc<LoggingBus>) -> Self {
+    pub fn new(logs: Arc<LoggingBus>) -> Self {
         let initial = HealthReport::from_checks(vec![HealthCheck {
             name: "startup".to_string(),
             status: HealthStatus::Degraded,
             latency_ms: None,
             message: Some("health monitor has not run yet".to_string()),
         }]);
-        Self { config, logs, latest: Arc::new(RwLock::new(initial)) }
+        Self { logs, latest: Arc::new(RwLock::new(initial)) }
     }
 
     pub async fn check_once(&self) -> HealthReport {
@@ -36,7 +34,6 @@ impl HealthMonitor {
     }
 
     pub async fn run_periodic(self: Arc<Self>) {
-        let _ = &self.config;
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             interval.tick().await;
@@ -48,31 +45,9 @@ impl HealthMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::AiProvider;
-    use std::time::Duration;
-
-    fn config() -> Config {
-        Config {
-            telegram_token_present: false,
-            bot_token: None,
-            ai_provider: AiProvider::Anthropic,
-            ai_model: "claude-sonnet-4-6".into(),
-            ai_base_url: None,
-            ai_api_path: None,
-            l0_history_limit: 30,
-            l0_max_user_history: 15,
-            l0_max_assistant_history: 15,
-            l0_search_limit: 10,
-            max_tool_failure_retries: 5,
-            ai_agent_timeout: Duration::from_secs(60),
-            ai_agent_max_timeout_retries: 3,
-            log_level: "info".into(),
-        }
-    }
-
     #[tokio::test]
     async fn configured_health_checks_are_ping_only() {
-        let monitor = HealthMonitor::new(config(), Arc::new(LoggingBus::default()));
+        let monitor = HealthMonitor::new(Arc::new(LoggingBus::default()));
         let report = monitor.check_once().await;
         let names = report.checks.iter().map(|check| check.name.as_str()).collect::<Vec<_>>();
 
